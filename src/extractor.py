@@ -12,10 +12,7 @@ try:
 except ImportError:
     pytesseract = None
 
-try:
-    import easyocr
-except ImportError:
-    easyocr = None
+
 
 import numpy as np
 import warnings
@@ -245,6 +242,7 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                     
                     ocr_text = ""
                     
+                    
                     # Method A: Tesseract (Preferred if available)
                     if pytesseract:
                         try:
@@ -259,20 +257,10 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                             ocr_text = pytesseract.image_to_string(img, lang='jpn')
                             print("OCR (Tesseract) success.")
 
-
                         except Exception as e:
                             print(f"Tesseract failed: {e}")
                     
-                    # Method B: EasyOCR (Fallback if Tesseract fails/missing)
-                    if not ocr_text and easyocr:
-                        try:
-                            print("Attempting EasyOCR (this may take a moment)...")
-                            reader = easyocr.Reader(['ja', 'en'], gpu=False, verbose=False)
-                            result = reader.readtext(np.array(img), detail=0)
-                            ocr_text = "\n".join(result)
-                            print("OCR (EasyOCR) success.")
-                        except Exception as e:
-                            print(f"EasyOCR failed: {e}")
+                    # EasyOCR Removed to save memory on Cloud
 
 
                     # Parse OCR Output (Same logic as Strategy 2)
