@@ -40,10 +40,11 @@ def parse_num(val, zone_name="Unknown"):
     try:
         return int(float(val_str))
     except (ValueError, TypeError):
-        # Try splitting by space (e.g., '0.0 0' -> '0.0')
-        if ' ' in val_str:
+        # Try splitting by ANY whitespace (e.g., '0.0 0' -> '0.0', '0.0\xa00' -> '0.0')
+        parts = val_str.split()
+        if len(parts) > 1:
             try:
-                first_part = val_str.split()[0]
+                first_part = parts[0]
                 return int(float(first_part))
             except: pass
 
@@ -62,10 +63,11 @@ def parse_float(val, zone_name="Unknown"):
     try:
         return float(val_str)
     except (ValueError, TypeError):
-        # Try splitting by space
-        if ' ' in val_str:
+        # Try splitting by ANY whitespace
+        parts = val_str.split()
+        if len(parts) > 1:
             try:
-                first_part = val_str.split()[0]
+                first_part = parts[0]
                 return float(first_part)
             except: pass
 
