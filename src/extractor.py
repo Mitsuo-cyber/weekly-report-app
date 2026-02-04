@@ -40,6 +40,13 @@ def parse_num(val, zone_name="Unknown"):
     try:
         return int(float(val_str))
     except (ValueError, TypeError):
+        # Try splitting by space (e.g., '0.0 0' -> '0.0')
+        if ' ' in val_str:
+            try:
+                first_part = val_str.split()[0]
+                return int(float(first_part))
+            except: pass
+
         if val_str and val_str not in ['', 'nan', 'None']:
              print(f"[WARNING] Could not parse number: '{val}' (Zone: {zone_name})")
         return 0
@@ -55,6 +62,13 @@ def parse_float(val, zone_name="Unknown"):
     try:
         return float(val_str)
     except (ValueError, TypeError):
+        # Try splitting by space
+        if ' ' in val_str:
+            try:
+                first_part = val_str.split()[0]
+                return float(first_part)
+            except: pass
+
         if val_str and val_str not in ['', 'nan', 'None']:
              print(f"[WARNING] Could not parse float: '{val}' (Zone: {zone_name})")
         return 0.0
