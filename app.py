@@ -19,10 +19,22 @@ if password != AUTH_PASSWORD:
     st.stop()  # Stop execution if password is wrong
 # ----------------------
 
+
 st.markdown("""
 日次の売上PDFファイルをアップロードしてください（複数可）。
 自動的に数値を読み取り、ブロック業種ごとの週次サマリーを作成します。
 """)
+
+@st.cache_data(ttl="2h")
+def process_file_content(file_bytes, filename):
+    """
+    Cache the expensive OCR/extraction process.
+    Pass file content as bytes to ensure proper hashing.
+    """
+    # Wrap bytes back into a file-like object for pdfplumber
+    file_obj = io.BytesIO(file_bytes)
+    return extract_from_pdf(file_obj, filename=filename)
+
 
 uploaded_files = st.file_uploader("PDFファイルをここにドラッグ＆ドロップ", type="pdf", accept_multiple_files=True)
 
@@ -35,7 +47,8 @@ if uploaded_files:
     
     for i, file in enumerate(uploaded_files):
         # Streamlit file object works with pdfplumber
-        df = extract_from_pdf(file, filename=file.name)
+        # Pass bytes to cached function
+        df = process_file_content(file.getvalue(), file.name)
         if df is not None and not df.empty:
             all_data.append(df)
         progress_bar.progress((i + 1) / len(uploaded_files))
@@ -54,8 +67,11 @@ if uploaded_files:
             st.subheader("📊 週次サマリー（業種別）")
             # Formatting for display
             display_df = summary_df.copy()
-            display_df['Sales'] = display_df['Sales'].apply(lambda x: f"{int(x):,}")
-            display_df['Count'] = display_df['Count'].apply(lambda x: f"{int(x):,}")
+            try:
+                display_df['Sales'] = display_df['Sales'].apply(lambda x: f"{int(x):,}")
+                display_df['Count'] = display_df['Count'].apply(lambda x: f"{int(x):,}")
+            except: pass # fallback if non-numeric
+            
             display_df['Sales_YoY'] = display_df['Sales_YoY'].astype(str) + "%"
             display_df['Count_YoY'] = display_df['Count_YoY'].astype(str) + "%"
             
@@ -77,7 +93,8 @@ if uploaded_files:
                 label="Excelファイルをダウンロード",
                 data=buffer.getvalue(),
                 file_name=f"売上集計_{time.strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_btn"
             )
             
         with st.expander("詳細データを確認する"):
