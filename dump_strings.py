@@ -14,9 +14,8 @@ def dump_strings():
             for s in strings:
                 try:
                     decoded = s.decode('utf-8')
-                    # Filter for interesting strings (numbers, dates, zones)
-                    if any(c.isdigit() for c in decoded) or "Sales" in decoded or "Zone" in decoded:
-                         print(decoded)
+                    # Just print everything to see what we have
+                    print(decoded)
                 except:
                     pass
     except FileNotFoundError:

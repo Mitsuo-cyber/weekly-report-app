@@ -157,11 +157,68 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                                 })
                         except Exception: continue
                             
+            # --- TEXT FALLBACK (Only if table method yielded no data) ---
+            if not data:
+                print(f"Table extraction yielded no data for {filename}. Trying RAW TEXT fallback...")
+                text = page.extract_text()
+                if text:
+                    lines = text.split('\n')
+                    header_found_in_text = False
+                    
+                    for line in lines:
+                        # Find header first to start "listening"
+                        if '純売上高' in line and '客数' in line:
+                            header_found_in_text = True
+                            continue
+                        
+                        # Only parse if we have seen the header OR if the line looks like data (heuristic)
+                        if header_found_in_text:
+                            parts = line.split()
+                            # Heuristic: Valid data line usually has: ZoneName Number Number ...
+                            if len(parts) >= 5:
+                                try:
+                                    # Attempt to parse from the end of the line (usually safer)
+                                    # Expected: [Zone] ... [Sales] [SalesYoY] [Count] [CountYoY]
+                                    c_yoy = parse_float(parts[-1])
+                                    cnt = parse_num(parts[-2])
+                                    s_yoy = parse_float(parts[-3])
+                                    sls = parse_num(parts[-4])
+                                    
+                                    # Zone is whatever is left at the start
+                                    zn = parts[0] 
+                                    
+                                    if sls > 0 or cnt > 0: # Only add if it looks like real data
+                                        data.append({
+                                            'Date': date_str, 'Zone': zn,
+                                            'Sales': sls, 'Sales_YoY': s_yoy,
+                                            'Count': cnt, 'Count_YoY': c_yoy
+                                        })
+                                except:
+                                    pass
+
+            # --- FINAL FALLBACK: Prevent App Error ---
+            if not data:
+                print(f"WARNING: Completely failed to extract data from {filename} (likely Image/Vector PDF). Returning placeholder.")
+                # Return a single row with Date and 0 values so the app doesn't show "Format Error"
+                data.append({
+                    'Date': date_str, 
+                    'Zone': '【読取不可】(画像PDFの可能性あり)',
+                    'Sales': 0, 
+                    'Sales_YoY': 0.0,
+                    'Count': 0, 
+                    'Count_YoY': 0.0
+                })
+
             return pd.DataFrame(data)
 
     except Exception as e:
         print(f"Error processing {filename}: {e}")
-        return pd.DataFrame()
+        # Return placeholder on exception too
+        return pd.DataFrame([{
+            'Date': date_str if 'date_str' in locals() else "Unknown",
+            'Zone': '【エラー】処理失敗',
+            'Sales': 0, 'Sales_YoY': 0.0, 'Count': 0, 'Count_YoY': 0.0
+        }])
 
 def process_all_pdfs(input_dir):
     pdf_files = glob.glob(os.path.join(input_dir, "*.pdf"))
