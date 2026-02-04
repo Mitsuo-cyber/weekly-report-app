@@ -4,6 +4,7 @@ import io
 import time
 import json
 import os
+import datetime
 from src.extractor import extract_from_pdf
 from src.aggregator import calculate_weekly_summary
 
@@ -115,27 +116,49 @@ if uploaded_files:
         
         # --- Manual Data Entry Form ---
         with st.expander("✍️ 手動データ入力 (読取失敗・修正用)", expanded=bool(unique_errors)):
-            st.caption("読み取れなかった、または数値が正しくない日の「総合計」を入力してください。")
+            st.caption("読み取れなかった、または数値が正しくない日の「総合計」を入力してください。数値は半角で入力してください（カンマ不要）。")
             
             with st.form("manual_entry_form"):
                 col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
                 m_date = col_m1.text_input("日付 (例: 20260201)", value="")
-                m_sales = col_m2.number_input("純売上高", min_value=0, step=1000)
-                m_sales_yoy = col_m3.number_input("売上前年比(%)", step=0.1)
-                m_count = col_m4.number_input("客数", min_value=0, step=10)
-                m_count_yoy = col_m5.number_input("客数前年比(%)", step=0.1)
+                
+                # Use text_input to avoid spinner buttons and auto-formatting
+                import re
+                def clean_num_input(val):
+                    if not val: return 0
+                    # Remove non-numeric except . and -
+                    v = re.sub(r'[^0-9\.\-]', '', str(val))
+                    try: return int(float(v))
+                    except: return 0
+                    
+                def clean_float_input(val):
+                    if not val: return 0.0
+                    v = re.sub(r'[^0-9\.\-]', '', str(val))
+                    try: return float(v)
+                    except: return 0.0
+
+                m_sales_str = col_m2.text_input("純売上高 (円)", value="")
+                m_sales_yoy_str = col_m3.text_input("売上前年比 (%)", value="")
+                m_count_str = col_m4.text_input("客数 (人)", value="")
+                m_count_yoy_str = col_m5.text_input("客数前年比 (%)", value="")
                 
                 submitted = st.form_submit_button("データ保存/上書き")
                 
                 if submitted and m_date:
+                    # Parse text inputs
+                    m_sales = clean_num_input(m_sales_str)
+                    m_sales_yoy = clean_float_input(m_sales_yoy_str)
+                    m_count = clean_num_input(m_count_str)
+                    m_count_yoy = clean_float_input(m_count_yoy_str)
+                    
                     # Save into session state
                     new_entry = {
                         'Date': m_date,
                         'Zone': '【軽井沢ＰＳＰ 計】', # Manual entry is always treated as Total
-                        'Sales': int(m_sales),
-                        'Sales_YoY': float(m_sales_yoy),
-                        'Count': int(m_count),
-                        'Count_YoY': float(m_count_yoy)
+                        'Sales': m_sales,
+                        'Sales_YoY': m_sales_yoy,
+                        'Count': m_count,
+                        'Count_YoY': m_count_yoy
                     }
                     st.session_state['manual_data'][m_date] = new_entry
                     save_manual_data(st.session_state['manual_data'])
@@ -163,12 +186,39 @@ if uploaded_files:
         # --- Calculate Summary ---
         summary_df = calculate_weekly_summary(combined_df)
         
+        # --- Data Validation (Day Count) ---
+        unique_dates = sorted(combined_df['Date'].astype(str).unique())
+        day_count = len(unique_dates)
+        date_range_str = "データなし"
+        missing_warning = ""
+        
+        if day_count > 0:
+            start_date = unique_dates[0]
+            end_date = unique_dates[-1]
+            date_range_str = f"{start_date} 〜 {end_date}"
+            
+            # Gap Check (Simple heuristic: count vs days between)
+            try:
+                d1 = datetime.datetime.strptime(start_date, "%Y%m%d")
+                d2 = datetime.datetime.strptime(end_date, "%Y%m%d")
+                delta_days = (d2 - d1).days + 1
+                if day_count < delta_days:
+                     missing_warning = f"⚠️ 日付に抜けがあります（期間: {delta_days}日間 / データ: {day_count}日分）。下のリストで不足日を確認してください。"
+                elif day_count < 7:
+                     missing_warning = f"⚠️ データが7日分揃っていません（現在: {day_count}日分）。"
+            except: pass
+
         st.success("集計完了！")
+        
+        if missing_warning:
+            st.warning(missing_warning)
         
         col1, col2 = st.columns([2, 1])
         
         with col1:
             st.subheader("📊 週次サマリー（業種別）")
+            st.caption(f"集計対象: **{day_count}日間** ({date_range_str})")
+            
             # Formatting for display
             display_df = summary_df.copy()
             
