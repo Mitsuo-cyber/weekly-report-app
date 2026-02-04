@@ -8,6 +8,7 @@ try:
         tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         if os.path.exists(tess_path):
             pytesseract.pytesseract.tesseract_cmd = tess_path
+    # On Linux (Streamlit Cloud), tesseract is usually in PATH, so no need to set cmd.
 except ImportError:
     pytesseract = None
 
@@ -233,11 +234,12 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                         try:
                             # Tesseract needs 'jpn' data. If not found, it might error or default to eng.
                             # We assume user might have it or we try.
-                            # Use custom tessdata path if in project root
+                            # Use custom tessdata path if in project root (mainly for local Windows dev)
                             local_tessdata = os.path.join(os.getcwd(), 'tessdata')
-                            if os.path.exists(local_tessdata):
+                            if os.path.exists(local_tessdata) and os.name == 'nt':
                                 os.environ['TESSDATA_PREFIX'] = local_tessdata
                             
+                            # On Linux/Cloud, we rely on apt-installed tessdata
                             ocr_text = pytesseract.image_to_string(img, lang='jpn')
                             print("OCR (Tesseract) success.")
 
