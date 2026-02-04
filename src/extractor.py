@@ -1,4 +1,26 @@
 import pdfplumber
+import os
+
+try:
+    import pytesseract
+    # Set Tesseract path for Windows
+    if os.name == 'nt':
+        tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        if os.path.exists(tess_path):
+            pytesseract.pytesseract.tesseract_cmd = tess_path
+except ImportError:
+    pytesseract = None
+
+try:
+    import easyocr
+except ImportError:
+    easyocr = None
+
+import numpy as np
+import warnings
+
+# Suppress easyocr warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 import pandas as pd
 import glob
 import os
@@ -195,6 +217,118 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                                         })
                                 except:
                                     pass
+
+            # --- STRATEGY 3: OCR Fallback (Image/Scan) ---
+            if not data:
+                print(f"Text extraction failed for {filename}. Trying OCR strategy...")
+                try:
+                    # Convert page to image
+                    # resolution=300 is standard for OCR
+                    img = page.to_image(resolution=300).original
+                    
+                    ocr_text = ""
+                    
+                    # Method A: Tesseract (Preferred if available)
+                    if pytesseract:
+                        try:
+                            # Tesseract needs 'jpn' data. If not found, it might error or default to eng.
+                            # We assume user might have it or we try.
+                            # Use custom tessdata path if in project root
+                            local_tessdata = os.path.join(os.getcwd(), 'tessdata')
+                            if os.path.exists(local_tessdata):
+                                os.environ['TESSDATA_PREFIX'] = local_tessdata
+                            
+                            ocr_text = pytesseract.image_to_string(img, lang='jpn')
+                            print("OCR (Tesseract) success.")
+
+
+                        except Exception as e:
+                            print(f"Tesseract failed: {e}")
+                    
+                    # Method B: EasyOCR (Fallback if Tesseract fails/missing)
+                    if not ocr_text and easyocr:
+                        try:
+                            print("Attempting EasyOCR (this may take a moment)...")
+                            reader = easyocr.Reader(['ja', 'en'], gpu=False, verbose=False)
+                            result = reader.readtext(np.array(img), detail=0)
+                            ocr_text = "\n".join(result)
+                            print("OCR (EasyOCR) success.")
+                        except Exception as e:
+                            print(f"EasyOCR failed: {e}")
+
+
+                    # Parse OCR Output (Same logic as Strategy 2)
+                    if ocr_text:
+                        lines = ocr_text.split('\n')
+                        header_found_in_text = False
+                        
+                        for line in lines:
+                            # Cleanup common OCR garbage/spaces
+                            line = line.strip()
+                            if not line: continue
+                            
+                            if '純売上高' in line or '売上' in line: # Looser check for OCR
+                                header_found_in_text = True
+                                continue
+                            
+                            if header_found_in_text:
+                                parts = line.split()
+                                # OCR often splits numbers into parts (e.g. 1, 234 -> 1 234)
+                                # This is a simplified parser assuming good OCR. 
+                                # If OCR is messy, we might need regex.
+                                
+                                # Heuristic: scan for numbers at the end
+                                valid_nums = []
+                                zone_parts = []
+                                
+                                for p in reversed(parts):
+                                    # remove commas and %
+                                    clean_p = p.replace(',', '').replace('%', '')
+                                    try:
+                                        # is it a number?
+                                        float(clean_p) 
+                                        valid_nums.insert(0, clean_p)
+                                    except:
+                                        # matches negative like "A100" or triangle char?
+                                        if '△' in p or '▲' in p:
+                                            valid_nums.insert(0, p)
+                                        else:
+                                            # Not a number affecting, stop if we found enough numbers
+                                            if len(valid_nums) >= 4:
+                                                zone_parts.insert(0, p)
+                                                # Break not strictly correct if zone has spaces, 
+                                                # but we are iterating backwards.
+                                                # Actually, better to just collect anything not num as zone
+                                            else:
+                                                 # if we haven't found 4 nums yet, and this isn't a num,
+                                                 # it might be part of a broken number or noise.
+                                                 pass
+                                
+                                if len(valid_nums) >= 4:
+                                     # Last 4 are likely our target
+                                     # [Sales] [SalesYoY] [Count] [CountYoY]
+                                    try:
+                                        c_yoy = parse_float(valid_nums[-1])
+                                        cnt = parse_num(valid_nums[-2])
+                                        s_yoy = parse_float(valid_nums[-3])
+                                        sls = parse_num(valid_nums[-4])
+                                        
+                                        # Zone is everything else?
+                                        # Re-read line to find zone text?
+                                        # Simple heuristic: first token
+                                        zn = parts[0]
+                                        
+                                        if sls > 0 or cnt > 0:
+                                             data.append({
+                                                'Date': date_str, 'Zone': zn,
+                                                'Sales': sls, 'Sales_YoY': s_yoy,
+                                                'Count': cnt, 'Count_YoY': c_yoy
+                                            })
+                                    except: pass
+
+                except Exception as e:
+                    print(f"OCR Strategy failed completely: {e}")
+
 
             # --- FINAL FALLBACK: Prevent App Error ---
             if not data:
