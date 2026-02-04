@@ -466,7 +466,7 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                 # Return a specific error marker so app.py can detect it
                 data.append({
                     'Date': date_str, 
-                    'Zone': f'ERROR_UNREADABLE:{filename}',
+                    'Zone': f'ERR:{filename}', # Shortened to prevent UI cutoff
                     'Sales': 0, 
                     'Sales_YoY': 0.0,
                     'Count': 0, 
@@ -480,7 +480,7 @@ def extract_from_pdf(pdf_file_obj, filename=None):
         # Return placeholder on exception too
         return pd.DataFrame([{
             'Date': date_str if 'date_str' in locals() else "Unknown",
-            'Zone': f'ERROR_UNREADABLE:{filename}',
+            'Zone': f'ERR:{filename}',
             'Sales': 0, 'Sales_YoY': 0.0, 'Count': 0, 'Count_YoY': 0.0
         }])
 

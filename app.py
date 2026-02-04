@@ -80,12 +80,12 @@ if uploaded_files:
         
         # --- Error Handling & Validation ---
         # 1. Unreadable File Markers
-        error_df_ocr = raw_concatenated[raw_concatenated['Zone'].str.contains('ERROR_UNREADABLE', na=False)].copy()
+        error_df_ocr = raw_concatenated[raw_concatenated['Zone'].str.contains('ERR:', na=False)].copy()
         
         # 2. Suspicious Data (Sales = 0) - likely misread or empty but valid PDF
         # We assume Sales=0 is impossible for a business day, as per user.
         warnings_df = raw_concatenated[
-            (~raw_concatenated['Zone'].str.contains('ERROR_UNREADABLE', na=False)) & 
+            (~raw_concatenated['Zone'].str.contains('ERR:', na=False)) & 
             (raw_concatenated['Sales'] == 0) &
             (raw_concatenated['Zone'].str.contains('軽井沢ＰＳＰ 計|総合計', na=False)) # Only check Total rows for strictness
         ].copy()
@@ -103,7 +103,7 @@ if uploaded_files:
 
         # Filter out invalid rows from main data
         valid_df = raw_concatenated[
-            (~raw_concatenated['Zone'].str.contains('ERROR_UNREADABLE', na=False)) & 
+            (~raw_concatenated['Zone'].str.contains('ERR:', na=False)) & 
             (raw_concatenated['Sales'] > 0)
         ]
         
@@ -148,10 +148,13 @@ if uploaded_files:
             manual_df = pd.DataFrame(manual_list)
             
             # Strategy: If Manual Data exists for a Date, drop the Extracted Data for that Date (to prevent dupes/conflicts)
-            manual_dates = set(manual_df['Date'].astype(str))
+            manual_dates = set(manual_df['Date'].astype(str).str.strip())
+            
+            # Ensure Date is string matchable
+            valid_df['Date'] = valid_df['Date'].astype(str).str.strip()
             
             # Filter out extracted rows that conflict with manual dates
-            filtered_valid_df = valid_df[~valid_df['Date'].astype(str).isin(manual_dates)]
+            filtered_valid_df = valid_df[~valid_df['Date'].isin(manual_dates)]
             
             combined_df = pd.concat([filtered_valid_df, manual_df], ignore_index=True)
         else:
@@ -205,8 +208,13 @@ if uploaded_files:
             if not combined_df.empty:
                 # Filter for Total Zone, sort, and Drop Duplicates to be safe
                 daily_view = combined_df[combined_df['Zone'].str.contains('軽井沢ＰＳＰ 計|総合計', na=False)].copy()
+                
+                # Robust Deduplication
+                # Ensure Date is strictly string and clean
+                daily_view['Date'] = daily_view['Date'].astype(str).str.strip()
                 daily_view = daily_view.sort_values('Date')
-                # Safety Dedup in case multiple files had same date/total
+                
+                # Deduplicate by Date, keeping the last (last is usually better if sorted or manual appends)
                 daily_view = daily_view.drop_duplicates(subset=['Date'], keep='last')
                 
                 # Consistent Formatting
