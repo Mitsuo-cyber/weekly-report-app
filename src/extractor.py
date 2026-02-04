@@ -455,10 +455,10 @@ def extract_from_pdf(pdf_file_obj, filename=None):
             # --- FINAL FALLBACK: Prevent App Error ---
             if not data:
                 print(f"WARNING: Completely failed to extract data from {filename} (likely Image/Vector PDF). Returning placeholder.")
-                # Return a single row with Date and 0 values so the app doesn't show "Format Error"
+                # Return a specific error marker so app.py can detect it
                 data.append({
                     'Date': date_str, 
-                    'Zone': '【読取不可】(画像PDFの可能性あり)',
+                    'Zone': f'ERROR_UNREADABLE:{filename}',
                     'Sales': 0, 
                     'Sales_YoY': 0.0,
                     'Count': 0, 
@@ -472,7 +472,7 @@ def extract_from_pdf(pdf_file_obj, filename=None):
         # Return placeholder on exception too
         return pd.DataFrame([{
             'Date': date_str if 'date_str' in locals() else "Unknown",
-            'Zone': '【エラー】処理失敗',
+            'Zone': f'ERROR_UNREADABLE:{filename}',
             'Sales': 0, 'Sales_YoY': 0.0, 'Count': 0, 'Count_YoY': 0.0
         }])
 
