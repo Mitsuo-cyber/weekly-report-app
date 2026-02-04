@@ -168,10 +168,15 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                         if len(row) < 3: continue
                         zone_name = row[0]
                         
-                        # Skip garbage
+                        # Skip garbage & duplicates
                         if not zone_name or zone_name in ['ブロック／業種', 'nan', 'None', ''] or '純売上高' in zone_name: continue
                         if 'SHO00200' in str(row): continue 
                         if '店別選択' in str(row): continue
+                        
+                        # Fix for Duplicate "Total" Rows:
+                        # "准合計" (Jun-Gokei) often appears right before "軽井沢PSP計" with same numbers.
+                        # Exclude it.
+                        if '准合計' in zone_name: continue
 
                         try:
                             sales_idx = col_map.get('Sales', 2)
@@ -439,6 +444,9 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                                         trash_chars = ['|', '!', ':', ';', '.']
                                         for tc in trash_chars:
                                             zn = zn.replace(tc, '')
+
+                                        # Skip duplicated subtotal in OCR too
+                                        if '准合計' in zn: continue
 
                                         if sls > 0 or cnt > 0:
                                              data.append({

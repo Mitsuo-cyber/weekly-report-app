@@ -78,20 +78,44 @@ if uploaded_files:
     if extracted_data:
         raw_concatenated = pd.concat(extracted_data, ignore_index=True)
         
-        # --- Error Handling ---
-        # Identify unreadable files
-        error_df = raw_concatenated[raw_concatenated['Zone'].str.contains('ERROR_UNREADABLE', na=False)]
-        valid_df = raw_concatenated[~raw_concatenated['Zone'].str.contains('ERROR_UNREADABLE', na=False)]
+        # --- Error Handling & Validation ---
+        # 1. Unreadable File Markers
+        error_df_ocr = raw_concatenated[raw_concatenated['Zone'].str.contains('ERROR_UNREADABLE', na=False)].copy()
         
-        if not error_df.empty:
-            st.error("⚠️ 以下のファイルの読み取りに失敗しました。手動でデータを入力してください。")
-            for _, row in error_df.iterrows():
+        # 2. Suspicious Data (Sales = 0) - likely misread or empty but valid PDF
+        # We assume Sales=0 is impossible for a business day, as per user.
+        warnings_df = raw_concatenated[
+            (~raw_concatenated['Zone'].str.contains('ERROR_UNREADABLE', na=False)) & 
+            (raw_concatenated['Sales'] == 0) &
+            (raw_concatenated['Zone'].str.contains('軽井沢ＰＳＰ 計|総合計', na=False)) # Only check Total rows for strictness
+        ].copy()
+        
+        # Combine errors
+        unique_errors = []
+        if not error_df_ocr.empty:
+            for _, row in error_df_ocr.iterrows():
                 fname = row['Zone'].split(':')[-1]
-                st.write(f"- 📄 **{fname}** (日付: {row['Date']})")
+                unique_errors.append(f"📄 **{fname}** (読み取り失敗: {row['Date']})")
+        
+        if not warnings_df.empty:
+             for _, row in warnings_df.iterrows():
+                unique_errors.append(f"⚠️ **日付: {row['Date']}** (売上0円 - 誤検知の可能性あり)")
+
+        # Filter out invalid rows from main data
+        valid_df = raw_concatenated[
+            (~raw_concatenated['Zone'].str.contains('ERROR_UNREADABLE', na=False)) & 
+            (raw_concatenated['Sales'] > 0)
+        ]
+        
+        # Explicit Error Display
+        if unique_errors:
+            st.error("⚠️ 以下のデータの読み取りに失敗、または内容に不備があります。手動でデータを修正してください。")
+            for err in unique_errors:
+                st.write(f"- {err}")
         
         # --- Manual Data Entry Form ---
-        with st.expander("✍️ 手動データ入力 (読取失敗時用)", expanded=not error_df.empty):
-            st.caption("読み取れなかった日の「総合計」を入力してください。詳細の入力は不要です。")
+        with st.expander("✍️ 手動データ入力 (読取失敗・修正用)", expanded=bool(unique_errors)):
+            st.caption("読み取れなかった、または数値が正しくない日の「総合計」を入力してください。")
             
             with st.form("manual_entry_form"):
                 col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
@@ -101,13 +125,13 @@ if uploaded_files:
                 m_count = col_m4.number_input("客数", min_value=0, step=10)
                 m_count_yoy = col_m5.number_input("客数前年比(%)", step=0.1)
                 
-                submitted = st.form_submit_button("データを保存")
+                submitted = st.form_submit_button("データ保存/上書き")
                 
                 if submitted and m_date:
-                    # Save to session and file
+                    # Save into session state
                     new_entry = {
                         'Date': m_date,
-                        'Zone': '【軽井沢ＰＳＰ 計】', # Treat as Total Zone
+                        'Zone': '【軽井沢ＰＳＰ 計】', # Manual entry is always treated as Total
                         'Sales': int(m_sales),
                         'Sales_YoY': float(m_sales_yoy),
                         'Count': int(m_count),
@@ -115,18 +139,21 @@ if uploaded_files:
                     }
                     st.session_state['manual_data'][m_date] = new_entry
                     save_manual_data(st.session_state['manual_data'])
-                    st.success(f"{m_date} のデータを保存しました。集計に反映されます。")
+                    st.success(f"{m_date} のデータを保存しました。")
                     st.rerun()
 
         # --- Merge Manual Data ---
-        # Convert manual dict to DataFrame
         if st.session_state['manual_data']:
             manual_list = list(st.session_state['manual_data'].values())
             manual_df = pd.DataFrame(manual_list)
-            # Combine valid extracted data with manual data
-            combined_df = pd.concat([valid_df, manual_df], ignore_index=True)
-            # Deduplicate? If extraction succeeded later, prefer extraction? 
-            # For now, simple concat. User manages manual data.
+            
+            # Strategy: If Manual Data exists for a Date, drop the Extracted Data for that Date (to prevent dupes/conflicts)
+            manual_dates = set(manual_df['Date'].astype(str))
+            
+            # Filter out extracted rows that conflict with manual dates
+            filtered_valid_df = valid_df[~valid_df['Date'].astype(str).isin(manual_dates)]
+            
+            combined_df = pd.concat([filtered_valid_df, manual_df], ignore_index=True)
         else:
             combined_df = valid_df
 
@@ -141,15 +168,18 @@ if uploaded_files:
             st.subheader("📊 週次サマリー（業種別）")
             # Formatting for display
             display_df = summary_df.copy()
-            try:
-                display_df['Sales'] = display_df['Sales'].apply(lambda x: f"{int(x):,}")
-                display_df['Count'] = display_df['Count'].apply(lambda x: f"{int(x):,}")
-            except: pass # fallback if non-numeric
             
-            display_df['Sales_YoY'] = display_df['Sales_YoY'].astype(str) + "%"
-            display_df['Count_YoY'] = display_df['Count_YoY'].astype(str) + "%"
+            # Handle potential empty data gracefully
+            if not display_df.empty:
+                try:
+                    display_df['Sales'] = display_df['Sales'].apply(lambda x: f"{int(x):,}")
+                    display_df['Count'] = display_df['Count'].apply(lambda x: f"{int(x):,}")
+                except: pass
+                
+                display_df['Sales_YoY'] = display_df['Sales_YoY'].astype(str) + "%"
+                display_df['Count_YoY'] = display_df['Count_YoY'].astype(str) + "%"
             
-            # Rename columns for display
+            # Rename columns
             display_df.columns = ['ブロック/業種', '純売上高', '売上前年比', '客数', '客数前年比']
             
             st.dataframe(display_df, use_container_width=True)
@@ -157,7 +187,6 @@ if uploaded_files:
         with col2:
             st.subheader("📥 ダウンロード")
             
-            # Create Excel in memory
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 summary_df.to_excel(writer, sheet_name='週次サマリー', index=False)
@@ -173,20 +202,31 @@ if uploaded_files:
             
         with st.expander("📅 日別詳細データ（サマリー）", expanded=True):
             st.write("各日の総合計一覧です。")
-            # Filter for Total Zone only to show daily breakdown cleanly
-            daily_summary_view = combined_df[combined_df['Zone'].str.contains('軽井沢ＰＳＰ 計|総合計', na=False)].sort_values('Date')
-            
-            # Format numbers
-            daily_view_fmt = daily_summary_view.copy()
-            try:
-                daily_view_fmt['Sales'] = daily_view_fmt['Sales'].apply(lambda x: f"{int(x):,}")
-                daily_view_fmt['Count'] = daily_view_fmt['Count'].apply(lambda x: f"{int(x):,}")
-            except: pass
-            
-            daily_view_fmt = daily_view_fmt[['Date', 'Sales', 'Sales_YoY', 'Count', 'Count_YoY']]
-            daily_view_fmt.columns = ['日付', '純売上高', '売上前年比(%)', '客数', '客数前年比(%)']
-            
-            st.dataframe(daily_view_fmt, use_container_width=True)
+            if not combined_df.empty:
+                # Filter for Total Zone, sort, and Drop Duplicates to be safe
+                daily_view = combined_df[combined_df['Zone'].str.contains('軽井沢ＰＳＰ 計|総合計', na=False)].copy()
+                daily_view = daily_view.sort_values('Date')
+                # Safety Dedup in case multiple files had same date/total
+                daily_view = daily_view.drop_duplicates(subset=['Date'], keep='last')
+                
+                # Consistent Formatting
+                try:
+                    daily_view['Sales'] = daily_view['Sales'].apply(lambda x: f"{int(x):,}")
+                    daily_view['Count'] = daily_view['Count'].apply(lambda x: f"{int(x):,}")
+                    
+                    # Ensure YoY has 1 decimal + % (same as Weekly Summary)
+                    # Note: Manual input might be float, extracted might be float. 
+                    daily_view['Sales_YoY'] = daily_view['Sales_YoY'].astype(float).round(1).astype(str) + "%"
+                    daily_view['Count_YoY'] = daily_view['Count_YoY'].astype(float).round(1).astype(str) + "%"
+                except Exception as e:
+                    pass
+
+                daily_view = daily_view[['Date', 'Sales', 'Sales_YoY', 'Count', 'Count_YoY']]
+                daily_view.columns = ['日付', '純売上高', '売上前年比', '客数', '客数前年比']
+                
+                st.dataframe(daily_view, use_container_width=True)
+            else:
+                st.info("データがありません。")
             
     else:
         st.error("データの抽出に失敗しました。PDFの形式を確認してください。")
