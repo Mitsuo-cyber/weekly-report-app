@@ -11,6 +11,13 @@ try:
     # On Linux (Streamlit Cloud), tesseract is usually in PATH, so no need to set cmd.
 except ImportError:
     pytesseract = None
+    print("WARNING: pytesseract import failed.")
+
+if pytesseract:
+    print("DEBUG: pytesseract module loaded.")
+else:
+    print("DEBUG: pytesseract module NOT loaded.")
+
 
 
 
@@ -254,8 +261,37 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                                 os.environ['TESSDATA_PREFIX'] = local_tessdata
                             
                             # On Linux/Cloud, we rely on apt-installed tessdata
-                            ocr_text = pytesseract.image_to_string(img, lang='jpn')
-                            print("OCR (Tesseract) success.")
+                            
+                            # Rotation strategy: 180 first (common issue), then 0, then 90, 270
+                            # Also often PDFs are landscape but processed as portrait.
+                             
+                            valid_ocr_text = None
+                            
+                            for angle in [0, 180, 90, 270]:
+                                print(f"DEBUG: Trying OCR with rotation {angle}...")
+                                if angle == 0:
+                                    rotated_img = img
+                                else:
+                                    rotated_img = img.rotate(angle, expand=True) # expand=True to keep full image
+                                    
+                                temp_text = pytesseract.image_to_string(rotated_img, lang='jpn')
+                                # print(f"DEBUG: Rotation {angle} text preview: {repr(temp_text[:200])}")
+                                
+                                # Check if it looks valid using clean text (ignoring spaces)
+                                clean_temp = temp_text.replace(" ", "").replace("\n", "")
+                                
+                                if '純売上高' in clean_temp or '売上' in clean_temp or 'Sales' in clean_temp or 'ブロック' in clean_temp or '業種' in clean_temp:
+                                    # print(f"DEBUG: Found valid headers at angle {angle}")
+                                    valid_ocr_text = temp_text
+                                    break
+                            
+                            if valid_ocr_text:
+                                ocr_text = valid_ocr_text
+                                print("OCR (Tesseract) success.")
+                                print(f"DEBUG_OCR_TEXT: {repr(ocr_text[:500])}")
+                            else:
+                                print(f"DEBUG: No valid headers found in any rotation. Using last result.")
+                                ocr_text = temp_text # Fallback to last attempt
 
                         except Exception as e:
                             print(f"Tesseract failed: {e}")
@@ -273,7 +309,9 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                             line = line.strip()
                             if not line: continue
                             
-                            if '純売上高' in line or '売上' in line: # Looser check for OCR
+                            # Robust header check
+                            clean_line = line.replace(" ", "")
+                            if '純売上高' in clean_line or '売上' in clean_line or 'ブロック' in clean_line: 
                                 header_found_in_text = True
                                 continue
                             
@@ -290,40 +328,118 @@ def extract_from_pdf(pdf_file_obj, filename=None):
                                 for p in reversed(parts):
                                     # remove commas and %
                                     clean_p = p.replace(',', '').replace('%', '')
-                                    try:
-                                        # is it a number?
-                                        float(clean_p) 
-                                        valid_nums.insert(0, clean_p)
-                                    except:
-                                        # matches negative like "A100" or triangle char?
-                                        if '△' in p or '▲' in p:
-                                            valid_nums.insert(0, p)
+                                    
+                                    # Helper to check if string is a number
+                                    def is_valid_num(s):
+                                        try:
+                                            float(s)
+                                            return True
+                                        except:
+                                            return False
+
+                                    is_num = False
+                                    final_val = clean_p
+                                    
+                                    # Case 1: Standard number
+                                    if is_valid_num(clean_p):
+                                        # Heuristic: If 1 dot and > 2 decimal places, assume it's a separator and strip it.
+                                        # (Exceptions: small numbers? But likely safe for this report)
+                                        if clean_p.count('.') == 1 and len(clean_p.split('.')[1]) > 2:
+                                             temp = clean_p.replace('.', '')
+                                             if is_valid_num(temp):
+                                                 final_val = temp
+                                        
+                                        is_num = True
+                                    
+                                    # Case 2: OCR noise with dots as thousands separators (e.g. 3.720.970)
+                                    # Only enters if NOT valid num (e.g. 2 dots)
+                                    elif clean_p.count('.') > 1:
+                                        # Try removing all dots (assume integer like 3.720.970)
+                                        temp = clean_p.replace('.', '')
+                                        if is_valid_num(temp):
+                                            final_val = temp
+                                            is_num = True
                                         else:
-                                            # Not a number affecting, stop if we found enough numbers
-                                            if len(valid_nums) >= 4:
-                                                zone_parts.insert(0, p)
-                                                # Break not strictly correct if zone has spaces, 
-                                                # but we are iterating backwards.
-                                                # Actually, better to just collect anything not num as zone
-                                            else:
-                                                 # if we haven't found 4 nums yet, and this isn't a num,
-                                                 # it might be part of a broken number or noise.
-                                                 pass
+                                            # Try keeping only last dot (e.g. 2.240.39)
+                                            # Split by dot, join all but last, then add dot back
+                                            dot_parts = clean_p.split('.')
+                                            temp2 = "".join(dot_parts[:-1]) + '.' + dot_parts[-1]
+                                            if is_valid_num(temp2):
+                                                final_val = temp2
+                                                is_num = True
+
+                                    # Case 3: Negative with triangle
+                                    if not is_num and ('△' in p or '▲' in p):
+                                        clean_p_neg = p.replace('△', '').replace('▲', '').replace(',', '').replace('%', '')
+                                        # Apply same dot logic to negative
+                                        if clean_p_neg.count('.') > 1:
+                                             temp = clean_p_neg.replace('.', '')
+                                             if is_valid_num(temp):
+                                                 final_val = '-' + temp # Treat as negative
+                                                 is_num = True
+                                        elif clean_p_neg.count('.') == 1:
+                                            parts_dot = clean_p_neg.split('.')
+                                            if len(parts_dot[1]) > 2:
+                                                temp = clean_p_neg.replace('.', '')
+                                                if is_valid_num(temp):
+                                                    final_val = '-' + temp
+                                                    is_num = True
+                                        
+                                        if not is_num and is_valid_num(clean_p_neg):
+                                            final_val = '-' + clean_p_neg
+                                            is_num = True
+                                    
+                                    if is_num:
+                                        valid_nums.insert(0, final_val)
+                                    else:
+                                        # Not a number.
+                                        # If we already have our 2 target numbers, this is likely Zone text.
+                                        if len(valid_nums) >= 2:
+                                            zone_parts.insert(0, p)
                                 
-                                if len(valid_nums) >= 4:
-                                     # Last 4 are likely our target
-                                     # [Sales] [SalesYoY] [Count] [CountYoY]
+                                if len(valid_nums) >= 2:
                                     try:
-                                        c_yoy = parse_float(valid_nums[-1])
-                                        cnt = parse_num(valid_nums[-2])
-                                        s_yoy = parse_float(valid_nums[-3])
-                                        sls = parse_num(valid_nums[-4])
+                                        sls = 0
+                                        s_yoy = 0.0
+                                        cnt = 0
+                                        c_yoy = 0.0
                                         
-                                        # Zone is everything else?
-                                        # Re-read line to find zone text?
-                                        # Simple heuristic: first token
+                                        if len(valid_nums) >= 4:
+                                            c_yoy = parse_float(valid_nums[-1])
+                                            cnt = parse_num(valid_nums[-2])
+                                            s_yoy = parse_float(valid_nums[-3])
+                                            sls = parse_num(valid_nums[-4])
+                                        elif len(valid_nums) >= 2:
+                                            # Assuming 2 numbers are Sales and YoY
+                                            v1 = parse_float(valid_nums[0])
+                                            v2 = parse_float(valid_nums[1])
+                                            
+                                            # Disambiguate Sales vs YoY using Magnitude
+                                            # Sales is usually the larger absolute value (millions vs percentage)
+                                            # Unless Sales is 0. 
+                                            
+                                            if abs(v1) > abs(v2):
+                                                sls = int(v1)
+                                                s_yoy = v2
+                                            else:
+                                                sls = int(v2)
+                                                s_yoy = v1
+                                                
+                                            # Edge case: If both are small? Unlikely for "Sales" in this context.
+                                            # But if v1 is 97.80 and v2 is 1.908.111 (parsed as 1908111), logic holds.
+
+                                        # Zone Name reconstruction
                                         zn = parts[0]
+                                        if zone_parts:
+                                            zn = "".join(zone_parts)
                                         
+                                        # Clean zone name
+                                        zn = zn.replace(" ", "")
+                                        # Remove common OCR trash from zone name start
+                                        trash_chars = ['|', '!', ':', ';', '.']
+                                        for tc in trash_chars:
+                                            zn = zn.replace(tc, '')
+
                                         if sls > 0 or cnt > 0:
                                              data.append({
                                                 'Date': date_str, 'Zone': zn,
