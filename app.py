@@ -12,24 +12,9 @@ st.set_page_config(page_title="売上PDF集計アプリ", layout="wide")
 
 st.title("🗂️ 売上報告PDF 自動集計ツール")
 
-# --- Manual Data Persistence ---
-MANUAL_DATA_FILE = "manual_data.json"
-
-def load_manual_data():
-    if os.path.exists(MANUAL_DATA_FILE):
-        try:
-            with open(MANUAL_DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_manual_data(data):
-    with open(MANUAL_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
+# --- Manual Data (Session Only) ---
 if 'manual_data' not in st.session_state:
-    st.session_state['manual_data'] = load_manual_data()
+    st.session_state['manual_data'] = {}
 # -------------------------------
 
 # --- Authentication ---
@@ -161,8 +146,8 @@ if uploaded_files:
                         'Count_YoY': m_count_yoy
                     }
                     st.session_state['manual_data'][m_date] = new_entry
-                    save_manual_data(st.session_state['manual_data'])
-                    st.success(f"{m_date} のデータを保存しました。")
+                    # save_manual_data(st.session_state['manual_data']) # DISABLED: Ephemeral only
+                    st.success(f"{m_date} のデータを保存しました（一時的）。")
                     st.rerun()
 
         # --- Merge Manual Data ---

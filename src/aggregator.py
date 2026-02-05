@@ -27,16 +27,19 @@ def calculate_weekly_summary(daily_df):
     # Select final columns
     summary = grouped[['Sales', 'Sales_YoY', 'Count', 'Count_YoY']].reset_index()
 
-    # Sort logic: Make sure "Total" is at the bottom if possible, or keep original order
-    # For now, let's sort by Sales descending just to have order, or rely on original PDF order?
-    # Keeping it simple for now. 
-    # If "総合計" (Grand Total) is present, move it to the end.
+    # Sort logic:
+    # 1. Remove "【総合計】" (Grand Total) if present, as it is confusing/redundant with PSP Total
+    summary = summary[~summary['Zone'].str.contains('総合計', na=False)]
+
+    # 2. Ensure "【軽井沢PSP計】" (PSP Total) is at the top
+    # Identify PSP Total row
+    psp_mask = summary['Zone'].str.contains('PSP', na=False) & summary['Zone'].str.contains('計', na=False)
     
-    # Identify Grand Total row
-    total_row_mask = summary['Zone'] == '【総合計】'
-    if total_row_mask.any():
-        total_row = summary[total_row_mask]
-        others = summary[~total_row_mask]
-        summary = pd.concat([others, total_row])
+    if psp_mask.any():
+        psp_row = summary[psp_mask]
+        others = summary[~psp_mask].sort_values('Sales', ascending=False)
+        summary = pd.concat([psp_row, others])
+    else:
+        summary = summary.sort_values('Sales', ascending=False)
 
     return summary
